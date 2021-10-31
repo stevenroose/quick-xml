@@ -221,16 +221,16 @@ impl<W: Write> Writer<W> {
     }
 }
 
-pub struct ElementWriter<'a, W: Write> {
-    writer: &'a mut Writer<W>,
-    start_tag: BytesStart<'a>,
+pub struct ElementWriter<'wr, W: Write> {
+    writer: &'wr mut Writer<W>,
+    start_tag: BytesStart<'wr>,
 }
 
-impl<'a, W: Write> ElementWriter<'a, W> {
+impl<'wr, W: Write> ElementWriter<'wr, W> {
     /// Adds an attribute to this element.
-    pub fn with_attribute<'b, I>(mut self, attr: I) -> Self
+    pub fn with_attribute<'a, I>(mut self, attr: I) -> Self
     where
-        I: Into<Attribute<'b>>,
+        I: Into<Attribute<'a>>,
     {
         self.start_tag.push_attribute(attr);
         self
@@ -241,17 +241,17 @@ impl<'a, W: Write> ElementWriter<'a, W> {
     /// The yielded items must be convertible to [`Attribute`] using `Into`.
     ///
     /// [`Attribute`]: attributes/struct.Attributes.html
-    pub fn with_attributes<'b, I>(mut self, attributes: I) -> Self
+    pub fn with_attributes<'a, I>(mut self, attributes: I) -> Self
     where
         I: IntoIterator,
-        I::Item: Into<Attribute<'b>>,
+        I::Item: Into<Attribute<'a>>,
     {
         self.start_tag.extend_attributes(attributes);
         self
     }
 
     /// Write some text inside the current element.
-    pub fn write_text_content(self, text: BytesText) -> Result<&'a mut Writer<W>> {
+    pub fn write_text_content(self, text: BytesText) -> Result<&'wr mut Writer<W>> {
         self.writer
             .write_event(Event::Start(self.start_tag.to_borrowed()))?;
         self.writer.write_event(Event::Text(text))?;
@@ -261,7 +261,7 @@ impl<'a, W: Write> ElementWriter<'a, W> {
     }
 
     /// Write a CData event `<![CDATA[...]]>` inside the current element.
-    pub fn write_cdata_content(self, text: BytesText) -> Result<&'a mut Writer<W>> {
+    pub fn write_cdata_content(self, text: BytesText) -> Result<&'wr mut Writer<W>> {
         self.writer
             .write_event(Event::Start(self.start_tag.to_borrowed()))?;
         self.writer.write_event(Event::CData(text))?;
@@ -271,7 +271,7 @@ impl<'a, W: Write> ElementWriter<'a, W> {
     }
 
     /// Write a processing instruction `<?...?>` inside the current element.
-    pub fn write_pi_content(self, text: BytesText) -> Result<&'a mut Writer<W>> {
+    pub fn write_pi_content(self, text: BytesText) -> Result<&'wr mut Writer<W>> {
         self.writer
             .write_event(Event::Start(self.start_tag.to_borrowed()))?;
         self.writer.write_event(Event::PI(text))?;
@@ -281,13 +281,13 @@ impl<'a, W: Write> ElementWriter<'a, W> {
     }
 
     /// Write an empty (self-closing) tag.
-    pub fn write_empty(self) -> Result<&'a mut Writer<W>> {
+    pub fn write_empty(self) -> Result<&'wr mut Writer<W>> {
         self.writer.write_event(Event::Empty(self.start_tag))?;
         Ok(self.writer)
     }
 
     /// Create a new scope for writing XML inside the current element.
-    pub fn write_inner_content<F>(mut self, closure: F) -> Result<&'a mut Writer<W>>
+    pub fn write_inner_content<F>(mut self, closure: F) -> Result<&'wr mut Writer<W>>
     where
         F: Fn(&mut Writer<W>) -> Result<()>,
     {

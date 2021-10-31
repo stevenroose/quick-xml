@@ -9,7 +9,7 @@ use std::{fs::File, path::Path, str::from_utf8};
 use encoding_rs::{Encoding, UTF_16BE, UTF_16LE};
 
 use crate::errors::{Error, Result};
-use crate::events::{attributes::Attribute, BytesDecl, BytesEnd, BytesStart, BytesText, Event};
+use crate::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
 use memchr;
 
@@ -882,20 +882,20 @@ impl Reader<BufReader<File>> {
     }
 }
 
-impl<'a> Reader<&'a [u8]> {
+impl<'inp> Reader<&'inp [u8]> {
     /// Creates an XML reader from a string slice.
-    pub fn from_str(s: &'a str) -> Reader<&'a [u8]> {
+    pub fn from_str(s: &'inp str) -> Reader<&'inp [u8]> {
         Reader::from_reader(s.as_bytes())
     }
 
     /// Creates an XML reader from a slice of bytes.
-    pub fn from_bytes(s: &'a [u8]) -> Reader<&'a [u8]> {
+    pub fn from_bytes(s: &'inp [u8]) -> Reader<&'inp [u8]> {
         Reader::from_reader(s)
     }
 
     /// Read an event that borrows from the input rather than a buffer.
     #[inline]
-    pub fn read_event_unbuffered(&mut self) -> Result<Event<'a>> {
+    pub fn read_event_unbuffered(&mut self) -> Result<Event<'inp>> {
         self.read_event_buffered(())
     }
 
@@ -924,20 +924,20 @@ impl<'a> Reader<&'a [u8]> {
     }
 }
 
-trait BufferedInput<'r, 'i, B>
+trait BufferedInput<'bf, 'int, B>
 where
-    Self: 'i,
+    Self: 'int,
 {
     fn read_bytes_until(
         &mut self,
         byte: u8,
         buf: B,
         position: &mut usize,
-    ) -> Result<Option<&'r [u8]>>;
+    ) -> Result<Option<&'bf [u8]>>;
 
-    fn read_bang_element(&mut self, buf: B, position: &mut usize) -> Result<Option<&'r [u8]>>;
+    fn read_bang_element(&mut self, buf: B, position: &mut usize) -> Result<Option<&'bf [u8]>>;
 
-    fn read_element(&mut self, buf: B, position: &mut usize) -> Result<Option<&'r [u8]>>;
+    fn read_element(&mut self, buf: B, position: &mut usize) -> Result<Option<&'bf [u8]>>;
 
     fn skip_whitespace(&mut self, position: &mut usize) -> Result<()>;
 
@@ -945,21 +945,22 @@ where
 
     fn peek_one(&mut self) -> Result<Option<u8>>;
 
-    fn input_borrowed(event: Event<'r>) -> Event<'i>;
+    fn input_borrowed(event: Event<'bf>) -> Event<'int>;
 }
 
 /// Implementation of BufferedInput for any BufRead reader using a user-given
 /// Vec<u8> as buffer that will be borrowed by events.
-impl<'b, 'i, R: BufRead + 'i> BufferedInput<'b, 'i, &'b mut Vec<u8>> for R {
+// The lifetimes are 'bf for the ad-hoc buffer and 'r for the type of the BufRead.
+impl<'bf, 'r, R: BufRead + 'r> BufferedInput<'bf, 'r, &'bf mut Vec<u8>> for R {
     /// read until `byte` is found or end of file
     /// return the position of byte
     #[inline]
     fn read_bytes_until(
         &mut self,
         byte: u8,
-        buf: &'b mut Vec<u8>,
+        buf: &'bf mut Vec<u8>,
         position: &mut usize,
-    ) -> Result<Option<&'b [u8]>> {
+    ) -> Result<Option<&'bf [u8]>> {
         let mut read = 0;
         let mut done = false;
         let start = buf.len();
@@ -1001,9 +1002,9 @@ impl<'b, 'i, R: BufRead + 'i> BufferedInput<'b, 'i, &'b mut Vec<u8>> for R {
 
     fn read_bang_element(
         &mut self,
-        buf: &'b mut Vec<u8>,
+        buf: &'bf mut Vec<u8>,
         position: &mut usize,
-    ) -> Result<Option<&'b [u8]>> {
+    ) -> Result<Option<&'bf [u8]>> {
         // Peeked one bang ('!') before being called, so it's guaranteed to
         // start with it.
         let start = buf.len();
@@ -1103,9 +1104,9 @@ impl<'b, 'i, R: BufRead + 'i> BufferedInput<'b, 'i, &'b mut Vec<u8>> for R {
     #[inline]
     fn read_element(
         &mut self,
-        buf: &'b mut Vec<u8>,
+        buf: &'bf mut Vec<u8>,
         position: &mut usize,
-    ) -> Result<Option<&'b [u8]>> {
+    ) -> Result<Option<&'bf [u8]>> {
         #[derive(Clone, Copy)]
         enum State {
             /// The initial state (inside element, but outside of attribute value)
@@ -1229,20 +1230,20 @@ impl<'b, 'i, R: BufRead + 'i> BufferedInput<'b, 'i, &'b mut Vec<u8>> for R {
         }
     }
 
-    fn input_borrowed(event: Event<'b>) -> Event<'i> {
+    fn input_borrowed(event: Event<'bf>) -> Event<'static> {
         event.into_owned()
     }
 }
 
 /// Implementation of BufferedInput for any BufRead reader using a user-given
 /// Vec<u8> as buffer that will be borrowed by events.
-impl<'a> BufferedInput<'a, 'a, ()> for &'a [u8] {
+impl<'inp> BufferedInput<'inp, 'inp, ()> for &'inp [u8] {
     fn read_bytes_until(
         &mut self,
         byte: u8,
         _buf: (),
         position: &mut usize,
-    ) -> Result<Option<&'a [u8]>> {
+    ) -> Result<Option<&'inp [u8]>> {
         if self.is_empty() {
             return Ok(None);
         }
@@ -1263,7 +1264,7 @@ impl<'a> BufferedInput<'a, 'a, ()> for &'a [u8] {
         return Ok(Some(bytes));
     }
 
-    fn read_bang_element(&mut self, _buf: (), position: &mut usize) -> Result<Option<&'a [u8]>> {
+    fn read_bang_element(&mut self, _buf: (), position: &mut usize) -> Result<Option<&'inp [u8]>> {
         // Peeked one bang ('!') before being called, so it's guaranteed to
         // start with it.
         debug_assert_eq!(self[0], b'!');
@@ -1316,7 +1317,7 @@ impl<'a> BufferedInput<'a, 'a, ()> for &'a [u8] {
         Err(Error::UnexpectedEof(bang_str.to_string()))
     }
 
-    fn read_element(&mut self, _buf: (), position: &mut usize) -> Result<Option<&'a [u8]>> {
+    fn read_element(&mut self, _buf: (), position: &mut usize) -> Result<Option<&'inp [u8]>> {
         if self.is_empty() {
             return Ok(None);
         }
@@ -1386,7 +1387,7 @@ impl<'a> BufferedInput<'a, 'a, ()> for &'a [u8] {
         Ok(self.first().copied())
     }
 
-    fn input_borrowed(event: Event<'a>) -> Event<'a> {
+    fn input_borrowed(event: Event<'inp>) -> Event<'inp> {
         return event;
     }
 }
@@ -1507,28 +1508,28 @@ impl NamespaceBufferIndex {
         let level = self.nesting_level;
         // adds new namespaces for attributes starting with 'xmlns:' and for the 'xmlns'
         // (default namespace) attribute.
-        for a in e.attributes().with_checks(false) {
-            if let Ok(Attribute { key: k, value: v }) = a {
-                if k.starts_with(b"xmlns") {
-                    match k.get(5) {
+        for attribute in e.attributes().with_checks(false) {
+            if let Ok(attr) = attribute {
+                if attr.key.starts_with(b"xmlns") {
+                    match attr.key.get(5) {
                         None => {
                             let start = buffer.len();
-                            buffer.extend_from_slice(&*v);
+                            buffer.extend_from_slice(&attr.value);
                             self.slices.push(Namespace {
                                 start,
                                 prefix_len: 0,
-                                value_len: v.len(),
+                                value_len: attr.value.len(),
                                 level,
                             });
                         }
                         Some(&b':') => {
                             let start = buffer.len();
-                            buffer.extend_from_slice(&k[6..]);
-                            buffer.extend_from_slice(&*v);
+                            buffer.extend_from_slice(&attr.key[6..]);
+                            buffer.extend_from_slice(&attr.value);
                             self.slices.push(Namespace {
                                 start,
-                                prefix_len: k.len() - 6,
-                                value_len: v.len(),
+                                prefix_len: attr.key.len() - 6,
+                                value_len: attr.value.len(),
                                 level,
                             });
                         }
